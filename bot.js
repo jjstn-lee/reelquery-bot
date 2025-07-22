@@ -28,7 +28,7 @@ async function downloadVideo(link) {
   }
 }
 
-downloadVideo("https://youtu.be/ZYLYDi2I0lY?si=ZlCQzTWTcBfG4MgX");
+downloadVideo("https://www.instagram.com/reel/DMXQEJzpL5F/?utm_source=ig_web_copy_link");
 
 
 // const result = await gradioClient.predict("/generate", { 

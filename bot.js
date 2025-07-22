@@ -1,21 +1,81 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
-const express = require('express');
-const { exec } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+import { Client as GradioClient } from "@gradio/client";
+import { Client as DiscordClient, GatewayIntentBits } from "discord.js";
+import { YtDlp } from 'ytdlp-nodejs';
+import dotenv from 'dotenv';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMessages] });
-const app = express();
-const PORT = process.env.PORT || 3000;
+dotenv.config();
 
-client.on('ready', () => {
-  console.log(`🤖 Logged in as ${client.user.tag}`);
+
+const gradioClient = await GradioClient.connect("lixin4ever/VideoLLaMA2");
+
+const ytdlp = new YtDlp();
+
+
+async function downloadVideo(link) {
+  try {
+    const output = await ytdlp.downloadAsync(
+      link,
+      {
+        onProgress: (progress) => {
+          console.log(progress);
+        },
+        // others args
+      }
+    );
+    console.log('Download completed:', output);
+  } catch (error) {
+    console.error('Error:', error);
+  }
+}
+
+downloadVideo("https://youtu.be/ZYLYDi2I0lY?si=ZlCQzTWTcBfG4MgX");
+
+
+// const result = await gradioClient.predict("/generate", { 
+// 				image: exampleImage, 
+// 				video: exampleVideo, 		
+// 		chatbot: [["Hello!",None]], 		
+// 		textbox_in: "Hello!!", 		
+// 		temperature: 0.1, 		
+// 		top_p: 0, 		
+// 		max_output_tokens: 64, 
+// });
+
+// console.log(result.data);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const discordClient = new DiscordClient({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
-client.on('messageCreate', async (message) => {
+discordClient.on('ready', () => {
+  console.log(`🤖 Logged in as ${discordClient.user.tag}`);
+});
+
+discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // regex matching for insta reel
   const urlMatch = message.content.match(/https:\/\/www\.instagram\.com\/reel\/[\w-]+/);
   if (urlMatch) {
     const reelUrl = urlMatch[0];
@@ -46,8 +106,10 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
 
-// Optionally serve health check
-app.get('/', (_, res) => res.send('🤖 Bot is running'));
-app.listen(PORT, () => console.log(`🌐 Express server running on port ${PORT}`));
+
+
+
+
+discordClient.login(process.env.DISCORD_TOKEN);
+

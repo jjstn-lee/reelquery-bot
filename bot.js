@@ -2,15 +2,24 @@ import { Client as GradioClient } from "@gradio/client";
 import { Client as DiscordClient, GatewayIntentBits } from "discord.js";
 import { YtDlp } from 'ytdlp-nodejs';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import { createWorker } from 'tesseract.js';
 
 dotenv.config();
 
-import { createWorker } from 'tesseract.js';
-
+// establish clients/workers from APIs; discord bot login after defining its handlers
 const gradioClient = await GradioClient.connect("lixin4ever/VideoLLaMA2");
-
 const ytdlp = new YtDlp();
 
+const discordClient = new DiscordClient({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+});
+
+// return date in format: YYYY-MM-DD-HH-MM-SS-MS
 function getFormattedDate() {
   const now = new Date();
 
@@ -25,11 +34,12 @@ function getFormattedDate() {
   const second = pad(now.getSeconds());
   const ms = pad(now.getMilliseconds(), 3);
 
-  // Format: YYYY-MM-DD-HH-MM-SS-MS  (colons replaced with dashes)
   return `${year}-${month}-${day}-${hour}-${minute}-${second}-${ms}`;
 }
 
 async function downloadVideo(link) {
+  const now = getFormattedDate();
+  fs.mkdirSync(`./downloads/${now}`, { recursive: true })
   try {
     const output = await ytdlp.downloadAsync(
       link,
@@ -37,7 +47,7 @@ async function downloadVideo(link) {
         onProgress: (progress) => {
           console.log(progress);
         },
-        output: `./downloads/${getFormattedDate()}.%(ext)s`,
+        output: `./downloads/${now}/${now}.%(ext)s`,
       }
     );
     console.log('Download completed:', output);
@@ -55,9 +65,6 @@ async function downloadVideo(link) {
   await worker.terminate();
 })();
 
-downloadVideo("https://www.instagram.com/reel/DMXQEJzpL5F/?utm_source=ig_web_copy_link");
-
-
 // const result = await gradioClient.predict("/generate", { 
 // 				image: exampleImage, 
 // 				video: exampleVideo, 		
@@ -70,13 +77,7 @@ downloadVideo("https://www.instagram.com/reel/DMXQEJzpL5F/?utm_source=ig_web_cop
 
 // console.log(result.data);
 
-const discordClient = new DiscordClient({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-});
+
 
 discordClient.on('ready', () => {
   console.log(`🤖 Logged in as ${discordClient.user.tag}`);
@@ -95,7 +96,11 @@ discordClient.on('messageCreate', async (message) => {
 
     // entire matched string; don't wanna use message.content here just in case of some regex bs where urlMatch is true but message.content isn't the URL or smthng
     url = urlMatch[0];
-    downloadVideo(url);
+    if (downloadVideo(url)) {
+      console.log("SUCCESS in downloading reel")
+    } else {
+      console.log("FAILED in downloading reel")
+    }
 
 
 

@@ -5,11 +5,29 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+import { createWorker } from 'tesseract.js';
 
 const gradioClient = await GradioClient.connect("lixin4ever/VideoLLaMA2");
 
 const ytdlp = new YtDlp();
 
+function getFormattedDate() {
+  const now = new Date();
+
+  const pad = (num, size = 2) => String(num).padStart(size, '0');
+
+  const year = now.getFullYear();
+  const month = pad(now.getMonth() + 1);   // months are 0-based
+  const day = pad(now.getDate());
+
+  const hour = pad(now.getHours());
+  const minute = pad(now.getMinutes());
+  const second = pad(now.getSeconds());
+  const ms = pad(now.getMilliseconds(), 3);
+
+  // Format: YYYY-MM-DD-HH-MM-SS-MS  (colons replaced with dashes)
+  return `${year}-${month}-${day}-${hour}-${minute}-${second}-${ms}`;
+}
 
 async function downloadVideo(link) {
   try {
@@ -19,14 +37,23 @@ async function downloadVideo(link) {
         onProgress: (progress) => {
           console.log(progress);
         },
-        // others args
+        output: `./downloads/${getFormattedDate()}.%(ext)s`,
       }
     );
     console.log('Download completed:', output);
+    return true;
   } catch (error) {
     console.error('Error:', error);
+    return false;
   }
 }
+
+(async () => {
+  const worker = await createWorker('eng');
+  const ret = await worker.recognize('https://tesseract.projectnaptha.com/img/eng_bw.png');
+  console.log(ret.data.text);
+  await worker.terminate();
+})();
 
 downloadVideo("https://www.instagram.com/reel/DMXQEJzpL5F/?utm_source=ig_web_copy_link");
 
@@ -42,23 +69,6 @@ downloadVideo("https://www.instagram.com/reel/DMXQEJzpL5F/?utm_source=ig_web_cop
 // });
 
 // console.log(result.data);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 const discordClient = new DiscordClient({
   intents: [
@@ -78,12 +88,20 @@ discordClient.on('messageCreate', async (message) => {
   // regex matching for insta reel
   const urlMatch = message.content.match(/https:\/\/www\.instagram\.com\/reel\/[\w-]+/);
   if (urlMatch) {
-    const reelUrl = urlMatch[0];
     message.reply("📥 Downloading the reel...");
 
-    const outPath = `videos/${Date.now()}.mp4`;
-    const cmd = `yt-dlp -f best -o "${outPath}" "${reelUrl}"`;
+    // const outPath = `videos/${Date.now()}.mp4`;
+    // const cmd = `yt-dlp -f best -o "${outPath}" "${reelUrl}"`;
 
+    // entire matched string; don't wanna use message.content here just in case of some regex bs where urlMatch is true but message.content isn't the URL or smthng
+    url = urlMatch[0];
+    downloadVideo(url);
+
+
+
+
+
+    
     exec(cmd, async (err) => {
       if (err) {
         console.error(err);

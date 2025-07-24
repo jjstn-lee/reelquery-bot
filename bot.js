@@ -1,16 +1,27 @@
 import { Client as GradioClient } from "@gradio/client";
 import { Client as DiscordClient, GatewayIntentBits } from "discord.js";
 import { YtDlp } from 'ytdlp-nodejs';
+
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+import cv from '@u4/opencv4nodejs';
+
 import dotenv from 'dotenv';
 import fs from 'fs';
+import path from 'path';
 import { createWorker } from 'tesseract.js';
+
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
 // establish clients/workers from APIs; discord bot login after defining its handlers
 const gradioClient = await GradioClient.connect("lixin4ever/VideoLLaMA2");
 const ytdlp = new YtDlp();
-
 const discordClient = new DiscordClient({
   intents: [
     GatewayIntentBits.Guilds,
@@ -18,6 +29,60 @@ const discordClient = new DiscordClient({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+// establish tesseract.js (OCR) helper functions
+async function initWorker() {
+    const worker = await createWorker('eng');
+    await worker.setParameters({
+        tessedit_pageseg_mode: '6'
+    });
+    return worker;
+}
+// image might fail; FIXME: ADD AN ERROR CATCH
+async function recognizeImage(image) {
+    console.log(`in recognizeImage(), image: ${image}...`);
+    const worker = await initWorker();
+
+    const img = cv.imread(image);
+    console.log("after cv.imread()...")
+    // preprocess image
+    const gray = img.bgrToGray();               
+    const blurred = gray.gaussianBlur(new cv.Size(5, 5), 1.5);
+    const thresholded = blurred.threshold(0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    console.log("after preprocessing...")
+
+    // save preprocessed image
+    const parsed = path.parse(image);
+    const newFileName = `${parsed.name}_processed${parsed.ext}`;
+    const processedPath = path.join(parsed.dir, newFileName);
+    const processed = thresholded.cvtColor(cv.COLOR_GRAY2BGR);
+    cv.imwrite(processedPath, processed);
+
+    if (!fs.existsSync(processedPath)) {
+      throw new Error('❌ Failed to write processed image');
+    }
+    console.log('✅ Image successfully saved:', processedPath);
+
+    const processed_result = await worker.recognize(processedPath);
+    const normal_result = await worker.recognize(image);
+    console.log("after recognizing images...");
+
+    await worker.terminate();
+    console.log("after terminating worker, returning...");
+    
+    return {
+      processed_result: processed_result.data.text,
+      normal_result: normal_result.data.text,
+    }
+}
+
+
+async function stopWorker() {
+    if (worker) {
+        await worker.terminate();
+        worker = null;
+    }
+}
 
 // return date in format: YYYY-MM-DD-HH-MM-SS-MS
 function getFormattedDate() {
@@ -37,9 +102,7 @@ function getFormattedDate() {
   return `${year}-${month}-${day}-${hour}-${minute}-${second}-${ms}`;
 }
 
-async function downloadVideo(link) {
-  const now = getFormattedDate();
-  fs.mkdirSync(`./downloads/${now}`, { recursive: true })
+async function downloadVideo(link, movieFile) {
   try {
     const output = await ytdlp.downloadAsync(
       link,
@@ -47,42 +110,70 @@ async function downloadVideo(link) {
         onProgress: (progress) => {
           console.log(progress);
         },
-        output: `./downloads/${now}/${now}.%(ext)s`,
+        output: movieFile,
       }
     );
     console.log('Download completed:', output);
-    return true;
+    return {
+        success: true,
+        file: output,
+    }
   } catch (error) {
     console.error('Error:', error);
-    return false;
+    return {
+        success: false,
+        error: error.message,
+    }
   }
 }
 
-(async () => {
-  const worker = await createWorker('eng');
-  const ret = await worker.recognize('https://tesseract.projectnaptha.com/img/eng_bw.png');
-  console.log(ret.data.text);
-  await worker.terminate();
-})();
+const execPromise = promisify(exec);
+async function extractFrames(inputFile, outputDir) {
+  const fps = process.env.FPS || 1;
+  const outputPath = path.join(outputDir, 'frame_%04d.png');
+  const ffmpeg_cmd = `ffmpeg -i "${inputFile}" -vf fps=${fps} "${outputPath}"`;
 
-// const result = await gradioClient.predict("/generate", { 
-// 				image: exampleImage, 
-// 				video: exampleVideo, 		
-// 		chatbot: [["Hello!",None]], 		
-// 		textbox_in: "Hello!!", 		
-// 		temperature: 0.1, 		
-// 		top_p: 0, 		
-// 		max_output_tokens: 64, 
-// });
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
 
-// console.log(result.data);
-
-
+  try {
+    const { stdout, stderr } = await execPromise(ffmpeg_cmd);
+    console.log(`✅ Frames extracted to ${outputDir} at ${fps} fps`);
+    if (stderr) console.error(`⚠️ FFmpeg stderr: ${stderr}`);
+  } catch (error) {
+    console.error(`❌ Error extracting frames: ${error.message}`);
+  }
+}
 
 discordClient.on('ready', () => {
   console.log(`🤖 Logged in as ${discordClient.user.tag}`);
 });
 
+// performs OCR on every frame image in the passed in directory
+async function ocrOnFrames(files) {
+    // console.log(`in ocrOnFrames: files=${files}`);
+
+    const ocrPromises = files.map(file => recognizeImage(file));
+    const ocr_results = await Promise.all(ocrPromises); 
+    console.log("in ocrOnFrames, all promises fullfilled; printing ocr_results below")
+    
+    ocr_results.forEach(result => {
+      console.log(`processed: ${result.processed_result}, normal: ${result.normal_result}`);
+    });
+    
+    return ocr_results;
+}
+
+// used to delete original movie file
+async function deleteFile(file) {
+  try {
+    await fs.promises.unlink(file);
+    console.log(`File ${file} has been successfully removed.`);
+  } catch (err) {
+    console.error(`Error removing file: ${err}`);
+  }
+}
 discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -91,48 +182,67 @@ discordClient.on('messageCreate', async (message) => {
   if (urlMatch) {
     message.reply("📥 Downloading the reel...");
 
-    // const outPath = `videos/${Date.now()}.mp4`;
-    // const cmd = `yt-dlp -f best -o "${outPath}" "${reelUrl}"`;
-
     // entire matched string; don't wanna use message.content here just in case of some regex bs where urlMatch is true but message.content isn't the URL or smthng
-    url = urlMatch[0];
-    if (downloadVideo(url)) {
-      console.log("SUCCESS in downloading reel")
+    const url = urlMatch[0];
+    // unique time will act as the directory and file name
+    const id = getFormattedDate();
+    const movieDir = `./downloads/${id}`;
+    fs.mkdirSync(movieDir, { recursive: true });
+
+    // 'let' because yt-dlp doesn't return which video extension it uses, thus need to change later
+    let movieFile = `./downloads/${id}/${id}.%(ext)s`;
+
+    const downloadResult = await downloadVideo(url, movieFile);
+    if (downloadResult.success) {
+        console.log("SUCCESS in downloading reel, continuing...")
     } else {
-      console.log("FAILED in downloading reel")
+        // if failed, don't attempt processing rest
+        console.log("FAILED in downloading reel, returning early...")
+        return;
     }
 
+    // declare files as list of files in the movie's directory
+    let files = [];
+    try {
+        files = fs.readdirSync(movieDir);  
+    } catch (err) {
+        console.log(`error in declaring files for ${movieDir}`)
+    }
+
+    // need to do this because yt-dlp doesn't return which extension it chose
+    movieFile = files.find(file => file.startsWith(id));
+    if (!movieFile) {
+        throw new Error('downloaded movie file not found');
+    }
+    movieFile = path.join(movieDir, movieFile)
 
 
 
+    await extractFrames(movieFile, movieDir);
 
-    
-    exec(cmd, async (err) => {
-      if (err) {
-        console.error(err);
-        message.reply("❌ Failed to download the video.");
-        return;
-      }
+    // DEBUG PRINTING
+    // let files = []
+    // try {
+    //     files = fs.readdirSync(`${movieDir}`);
+    //     console.log(`Files in ${movieDir}`);
+    //     files.forEach(file => {
+    //         console.log(file); // Or perform operations on the file
+    //     });
+    // } catch (err) {
+    //     console.error('Error reading directory:', err);
+    // }
 
-      message.reply("📊 Vectorizing...");
-      const python = exec(`python3 vectorizer.py "${outPath}"`);
 
-      python.stdout.on('data', (data) => {
-        console.log(`Vectorizer: ${data}`);
-      });
 
-      python.on('close', (code) => {
-        message.reply(code === 0 ? "✅ Reel vectorized and stored." : "❌ Vectorization failed.");
-        fs.unlinkSync(outPath); // optional: clean up
-      });
-    });
+    // readdirSync doesn't capture updates to the directory
+    await deleteFile(movieFile);
+    movieFile = null;
+    files = fs.readdirSync(movieDir);  
+
+    const framePaths = files.map(file => path.join(movieDir, file));
+    await ocrOnFrames(framePaths);
+    console.log("after calling ocrOnFrames")
   }
 });
 
-
-
-
-
-
 discordClient.login(process.env.DISCORD_TOKEN);
-

@@ -1,5 +1,6 @@
 node_modules/
 .env
+downloads/
 
 npm-debug.log*
 yarn-debug.log*

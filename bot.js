@@ -127,6 +127,7 @@ async function downloadVideo(link, movieFile) {
   }
 }
 
+
 const execPromise = promisify(exec);
 async function extractFrames(inputFile, outputDir) {
   const fps = process.env.FPS || 1;
@@ -165,7 +166,7 @@ async function ocrOnFrames(files) {
     return ocr_results;
 }
 
-// used to delete original movie file
+// used to delete original movie file, just to keep things nice and neat
 async function deleteFile(file) {
   try {
     await fs.promises.unlink(file);
@@ -174,6 +175,7 @@ async function deleteFile(file) {
     console.error(`Error removing file: ${err}`);
   }
 }
+
 discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
